@@ -1,0 +1,303 @@
+<HTML>
+<HEAD>
+<TITLE>fnami: Pentium</TITLE>
+</HEAD>
+
+<BODY>
+
+<H1>Pentiumでの高速化</H1>
+
+「アセンブリ言語でガチガチにコーディング」などと表現する人がいますが、そういうプログラムが本当に高速であることは少ないのです。よく書かれたアセンブリ言語のプログラムは、高速なのはもちろん、使われているテクニックを簡潔で美しく記述しており、かなりの程度の変更に対応できます。
+
+<P>一方、高級言語で書かれたプログラムでもよく工夫すれば、アセンブリ言語と同じくらい高速にすることはできます。もちろん、インラインアセンブラなどを使わずに、高級言語のメリットを保ったままでです。しかし、アセンブリ言語の速さ以上になることはまれですし、サイズで下回ることはまずありません。また、コーディングの際に、その高級言語の仕様、対象CPUでの実装、場合によっては機器の構成についての十分な知識を必要とします。
+
+<P>抽象化と高速化を簡単に両立させることはできません。あなたならどちらを選びますか。
+
+<OL>
+<LI>Pentium Pro/II/III</A>(準備中)
+<LI>Pentium 4</A>(準備中)
+<LI><A HREF="#MEMORY">メモリ管理の拡張</A>
+<LI><A HREF="#EM64T">Intel 64 (旧EM64T)</A>
+<LI><A HREF="#CLOCK">主な命令一覧</A>
+</OL>
+
+<HR>
+
+<A NAME="MEMORY"><H2>メモリ管理の拡張</H2></A>
+
+Pentiumプロセッサ以降でも、命令セット以外に拡張が行われている。ここでは、メモリ管理に関する拡張を説明する。拡張機能が使えるかどうかは、CPUID命令で知ることができる。
+
+<H3>PSE ページ・サイズ拡張</H3>
+
+CR4のPSEビットをセットすると、ページ・ディレクトリ・エントリのPSビットが有効になり、ページ・サイズとして4Mバイトを選べるようになる。
+
+<H3>PSE-36 36ビット・ページ・サイズ拡張</H3>
+
+CR4のPSEビットをセットし、ページ・ディレクトリ・エントリのPSビットをセットしたときに、36ビットの物理アドレスを使用できる。
+
+<H3>PAE 物理アドレス拡張</H3>
+
+CR4のPAEビットをセットすると、ページ・テーブル、ページ・ディレクトリに加えて、ページ・ディレクトリ・ポインタ・テーブルが使用されるようになる。各エントリは64ビットとなり、36ビットの物理アドレスを使用できる。また、ページ・ディレクトリ・エントリのPSビットが有効になり、ページ・サイズとして2Mバイトを選べるようになる。
+
+<H3>PGE PTEグローバル・ビット</H3>
+
+CR4のPGEビットをセットすると、ページ・ディレクトリ・エントリまたはページ・テーブル・エントリのGビットが有効になる。Gビットがセットされているエントリに対応するTLBエントリは、CR3が変更されても無効化されない。
+
+<H3>MTTR メモリ・タイプ範囲レジスタ</H3>
+
+メモリの物理アドレスの範囲に対して、メモリ・タイプを設定することができる。MSRの一つ、IA32_MTRR_DEF_TYPEのEビットをセットすると、有効になる。同じレジスタのFEビットをセットすると、固定範囲MTRRが有効になり、可変範囲MTRRは、各レジスタの組のVビットをセットすると有効になる。通常はファームフェアによって適切な値が設定されている。
+
+<H3>PAT ページ属性テーブル</H3>
+
+ページ・テーブル・エントリのPATビット(ビット7)、またはPSビットを有効にしたページ・ディレクトリ・エントリのPATビット(ビット12)と、PCDビット、PWTビットの、計3ビットを組み合わせて、対応するページのメモリ・タイプを、PATレジスタに設定した8種類の中から選べるようになる。これと、MTTRで設定したメモリ・タイプを組み合わせて、実際のメモリ・タイプが決まる。
+
+<P>PATの機能を持つプロセッサでは、PATが常に有効になっているが、リセット時には従来と同じ動作をするように設定されている。
+
+<P>PATビットを持たない、通常のページ・ディレクトリ・エントリやCR3の指す、ページ・テーブル自身、ページ・ディレクトリ自身などのメモリ・タイプには、PCDビットとPWTビットが通常通り適用される。
+
+<H3>SS セルフスヌープ</H2>
+
+MTRRを変更するときに、WBINVD命令によるキャッシュの書き戻しが不要である。
+
+<HR>
+
+<A NAME="EM64T"><H2>Intel 64 (旧EM64T: インテル(R) エクステンデッド・メモリ 64 テクノロジ、Intel(R) Extended Memory 64 Technology)</H2></A>
+
+Intel 64 (旧EM64T)は、AMD64との互換性が高く、K6の頃からのAMD独自の拡張命令であったSYSCALL,SYSRET命令もある。
+
+<P>AMD64との違いは次の通りである。
+
+<UL>
+<LI>フラグは32ビットのままである。AMD64のRFLAGSの上位32ビットは予約(読み出すと0)なので、実質的な違いはない。
+<LI>物理アドレスは40ビットである。CR3やページテーブルのビット40-51は予約ビットになっている。
+<LI>CMPXCHG8B命令にREXプリフィックスをつけて、CMPXCHG16B命令にできる。AMD64ではこの命令を持たない(無効命令になる)ものがある。
+<LI>longモードに相当するIA-32eモードでもSYSENTER,SYSEXIT命令が使える。
+<LI>32ビットアドレスサイズでのFS,GSのベースの加算は上位を捨てた後(AMD64では明記されていなかったので要確認)
+<LI>EFERのNXE(No-Execute Enable)ビットを持たないものがある
+<LI>64ビットモードのRETF,IRETQ命令で、SSにNULLを設定する場合でも、RPL=CPLでなければならない。
+</UL>
+
+(準備中)
+
+<P>IntelがEM64TをIntel 64に名称変更したため、x64で総称することに違和感はなくなった。
+
+<HR>
+
+<A NAME="CLOCK"><H2>主な命令一覧</H2></A>
+
+(準備中)
+
+<PRE>				Size	Clocks	Clocks	Unit	Clocks	Unit
+Opcode		Operands	Bytes	Pentium	Pentium Pro	Pentium 4
+
+NOP				1	1 UV			0.5 0.5
+
+MOV		r,r		2	1 UV			0.5 0.5
+MOV		r,m		2+EA	1 UV
+MOV		m,r		2+EA	1 UV
+MOV		r,i		1+I	1 UV
+MOV		m,i		2+EA+I	1 UV
+MOV		acc,m		3/5	1 UV
+MOV		m,acc		3/5	1 UV#a
+
+MOV		r,s		2	1
+MOV		m,s		2+EA	1
+MOV		s,r		2	2
+MOV		s,m		2+EA	3
+
+XCHG		(E)AX,r		1	2
+XCHG		r,r		2	3
+XCHG		m,r		2+EA	3#b
+
+XLAT				1	4
+
+PUSH		r		1	1 UV			1.5 1
+PUSH		i		1+I	1 UV
+POP		r		1	1 UV			1.5 1
+PUSH		m		2+EA	2
+POP		m		2+EA	3
+PUSH		s		1/2	1
+POP		s		1/2	3
+PUSHF				1	4
+POPF				1	6
+PUSHA				1	5
+POPA				1	5
+
+LAHF				1	2
+SAHF				1	2
+
+MOVZX MOVSX	r,r		3	3
+MOVZX MOVSX	r,m		3+EA	3
+
+BSWAP		r		2	1			7   1
+
+LEA		r,m		2+EA	1 UV
+
+LDS LES		r,m		2+EA	4
+LFS LGS LSS	r,m		3+EA	4
+
+ADD SUB AND OR XOR r,r		2	1 UV			0.5 0.5
+ADD SUB AND OR XOR r,m		2+EA	2 UV
+ADD SUB AND OR XOR m,r		2+EA	3 UV
+ADD SUB AND OR XOR acc,i	1+I	1 UV
+ADD SUB AND OR XOR r,i		2+I	1 UV
+ADD SUB AND OR XOR m,i		2+EA+I	3 UV
+
+ADC SBB		r,r		2	1 U			8   3
+ADC SBB		r,m		2+EA	2 U
+ADC SBB		m,r		2+EA	3 U
+ADC SBB		acc,i		1+I	1 U
+ADC SBB		r,i		2+I	1 U			6   2
+ADC SBB		m,i		2+EA+I	3 U
+
+CMP		r,r		2	1 UV			0.5 0.5
+CMP		r,m		2+EA	2 UV
+CMP		m,r		2+EA	2 UV
+CMP		acc,i		1+I	1 UV
+CMP		r,i		2+I	1 UV
+CMP		m,i		2+EA+I	2 UV
+
+TEST		r,r		2	1 UV			0.5 0.5
+TEST		m,r		2+EA	2 UV
+TEST		acc,i		1+I	1 UV
+TEST		r,i		2+I	1
+TEST		m,i		2+EA+I	2
+
+INC DEC		r16/32		1	1 UV
+INC DEC		r		2	1 UV			1   0.5
+INC DEC		m		2+EA	3 UV
+
+NEG NOT		r		2	1			0.5 0.5
+NEG NOT		m		2+EA	3
+
+MUL		r8		2	11
+MUL		r16		2	11
+MUL		r32		2	9
+MUL		m8		2+EA	11
+MUL		m16		2+EA	11
+MUL		m32		2+EA	9
+
+IMUL		r8		2	11
+IMUL		r16		2	11
+IMUL		r32		2	9
+IMUL		m8		2+EA	11
+IMUL		m16		2+EA	11
+IMUL		m32		2+EA	9
+
+IMUL		r16,r16		3	9
+IMUL		r32,r32		3	9
+IMUL		r16,m16		3+EA	9
+IMUL		r32,m32		3+EA	9
+IMUL		r16,r16,i	2+I	9
+IMUL		r32,r32,i	2+I	9
+IMUL		r16,m16,i	2+EA+I	9
+IMUL		r32,m32,i	2+EA+I	9
+
+DIV		r8		2	17
+DIV		r16		2	25
+DIV		r32		2	41
+DIV		m8		2+EA	17
+DIV		m16		2+EA	25
+DIV		m32		2+EA	41
+
+IDIV		r8		2	22
+IDIV		r16		2	30
+IDIV		r32		2	46
+IDIV		m8		2+EA	22
+IDIV		m16		2+EA	30
+IDIV		m32		2+EA	46
+
+AAA AAS				1	3
+AAM				2	10
+AAD				2	18
+DAA DAS				1	3
+
+CBW CWDE			1	3
+CWD CDQ				1	2
+
+ROL ROR		r,1		2	1 U			4   1
+ROL ROR		m,1		2+EA	3 U
+ROL ROR		r,i		3	1			4   1
+ROL ROR		m,i		3+EA	3
+ROL ROR		r,CL		2	4
+ROL ROR		m,CL		2+EA	5
+
+RCL RCR		r,1		2	1 U			4   1
+RCL RCR		m,1		2+EA	3 U
+RCL RCR		r,i		3	8
+RCL RCR		m,i		3+EA	10
+RCL RCR		r,CL		2	7
+RCL RCR		m,CL		2+EA	9
+
+SHL SHR SAL SAR	r,1		2	1 U			4   1
+SHL SHR SAL SAR	m,1		2+EA	3 U
+SHL SHR SAL SAR	r,i		3	1 U			4   1
+SHL SHR SAL SAR	m,i		3+EA	3 U
+SHL SHR SAL SAR	r,CL		2	4
+SHL SHR SAL SAR	m,CL		2+EA	5
+
+SHLD SHRD	r,r,i		4	4
+SHLD SHRD	m,r,i		4+EA	5
+SHLD SHRD	r,r,CL		3	4
+SHLD SHRD	m,r,CL		3+EA	5
+
+BT		r,r		3	4
+BT		m,r		3+EA	9
+BT		r,i		4	4
+BT		m,i		4+EA	4
+
+BTR BTS BTC	r,r		3	7
+BTR BTS BTC	m,r		3+EA	14
+BTR BTS BTC	r,i		4	7
+BTR BTS BTC	m,i		4+EA	8
+
+SETcc		r		3	1			5 1.5
+SETcc		m		3+EA	2
+
+Jcc		short/near	2/4/6	1 V
+JMP		short/near	2/3/5	1 V
+JMP		far		5/7	3
+JMP		r		2	2
+JMP		m		2+EA	2
+JMP		m(far)		2+EA	4
+
+CALL		near		3/5	1 V
+CALL		far		5/7	4
+CALL		r		2	2
+CALL		m		2+EA	2
+CALL		m(far)		2+EA	5
+
+RETN				1	2
+RETN		i16		3	3
+RETF				1	4
+RETF		i16		3	5
+
+JCXZ JECXZ	short		2	6/5
+LOOP		short		2	5/6
+LOOPZ		short		2	7/8
+LOOPNZ		short		2	7/8
+
+BOUND		r,m		2+EA	8
+ENTER		i16,0		4	11
+ENTER		i16,1		4	17
+ENTER		i16,i8		4	15+2n
+LEAVE				1	3
+
+CLC STC CMC CLD STD		1	2
+CLI				1	6
+STI				1	7
+
+LODS				1	2
+REP LODS			2	7+3n
+STOS				1	3
+REP STOS			2	10+n/7
+MOVS				1	4
+REP MOVS			2	12+n/6
+SCAS				1	4
+REP(N)E SCAS			2	9+4n/7
+CMPS				1	5
+REP(N)E CMPS			2	8+4n/7
+</PRE>
+
+</BODY>
+</HTML>

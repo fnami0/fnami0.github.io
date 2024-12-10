@@ -1,0 +1,477 @@
+<HTML>
+<HEAD>
+<TITLE>fnami: AMD64</TITLE>
+</HEAD>
+
+<BODY>
+
+<H1>AMD64での高速化</H1>
+
+<HR>
+
+アセンブリ言語を使うメリットは、処理のスループットが上がることだけではない。アセンブリ言語はあらゆる操作を表現できるため、大きな既成のライブラリを使わなくてもよい。アセンブリ言語レベルで無駄を省けば、不必要なライブラリルーチンや、既成のライブラリとつじつまを合わせるための余計なコードを含まない、非常にコンパクトなプログラムになる。小さなプログラムは外部記憶装置からのロードが速く、キャッシュにも載りやすいので、あらゆる操作が軽くなる。
+
+<P>アセンブリ言語のプログラムは、実行速度に関して処理系の影響を受けにくく、実行環境からの影響は直接的でわかりやすい。そのため、実行時間の予測がしやすく、時間のかかる部分を容易に発見して修正することができる。また、ソースコードを表示できるような高級なデバッガが使えないときでも、デバッグが簡単である。
+
+<P>アセンブリ言語でプログラム全体を記述するなら、そこには高級言語で見えたのとは別の世界が広がっている。
+
+<OL>
+<LI><A HREF="#INTRO">はじめに</A>
+<LI><A HREF="#DIFFERENCE">x86からの拡張の概要</A>
+<LI><A HREF="#PROCESSOR">搭載プロセッサ</A>
+<LI><A HREF="#CLOCK">主な命令一覧</A>(準備中)
+<LI><A HREF="#BIB">参考文献</A>
+</OL>
+
+<HR>
+
+<H2><A NAME="INTRO">1. はじめに</A></H2>
+
+AMD64は、当初はx86-64と呼ばれていた、x86を拡張する命令セットアーキテクチャである。64ビット演算が可能なモードでも、多くのx86命令はそのまま64ビットに拡張されて実行される。
+
+<P>この文章では、AMD64がx86から拡張された部分の概要を説明した後、AMD64を実装するプロセッサの特性を紹介する。
+
+<HR>
+
+<H2><A NAME="DIFFERENCE">2. x86からの拡張の概要</A></H2>
+
+<H3>2.1 モード</H3>
+
+AMD64には、大きく分けて二つのモードがある。legacyモードは、x86と互換のモード(拡張された機能は使えない)である。AMD64で追加されたlongモードは、さらに二つのサブモードに分かれる。compatibilityモードは、x86の16/32ビットプロテクトモードと互換性のあるモードである。64ビット命令が使えるのは、64ビットモードだけである。
+
+<P>longモードでは、割り込みハンドラは64ビットモードで呼び出され、ページテーブルやTSSの構造もlegacyモードとは異なるため、longモード用のシステムソフトウェアを用意する必要がある。システムソフトウェアで適切にサポートするなら、compatibilityモードで4GBを超える物理メモリを使用したり、x86のプロテクトモード用のアプリケーションプログラムと64ビットモード用のアプリケーションプログラムを並行して実行させたりすることができる。
+
+<P>各モードの特徴をまとめると次のようになる。
+<TABLE BORDER>
+<TR><TH COLSPAN=3>モード<TH>アドレスサイズ<TH>オペランドサイズ<TH>汎用レジスタ数<TH>物理アドレス空間<TH>使用可能なリニアアドレス空間<TH>セグメントベースアドレス<TH>セグメントリミット
+<TR ALIGN=CENTER><TH ROWSPAN=3>longモード<TH COLSPAN=2>64ビットモード<TD>64/32<TD>32/16/64,8<TD>16<TD ROWSPAN=3>2^52 #1<TD>2^48 #1<TD>0 #2<TD>2^64-1
+<TR ALIGN=CENTER><TH ROWSPAN=2>compatibilityモード<TD>32<TD>32/16<TD>32/16,8<TD ROWSPAN=6>8<TD ROWSPAN=4>2^32<TD ROWSPAN=4 COLSPAN=2>セグメントディスクリプタによる
+<TR ALIGN=CENTER><TD>16<TD>16/32<TD>16/32,8
+<TR ALIGN=CENTER><TH ROWSPAN=4>legacyモード<TH ROWSPAN=2>プロテクトモード<TD>32<TD>32/16<TD>32/16,8<TD ROWSPAN=3>2^32/2^40/2^52 #3
+<TR ALIGN=CENTER><TD>16<TD ROWSPAN=3>16/32<TD ROWSPAN=3>16/32,8
+<TR ALIGN=CENTER><TH COLSPAN=2>仮想86モード<TD>2^20+HMA<TD ROWSPAN=2>セグメント値×16<TD ROWSPAN=2>2^16-1
+<TR ALIGN=CENTER><TH COLSPAN=2>リアルモード<TD COLSPAN=2>2^20+HMA #4
+</TABLE>
+#1 物理アドレスと仮想アドレスのビット数はCPUID命令のEAX=80000008hで得られる。<BR>
+#2 ES,CS,SS,DSは0。FS,GSはセグメントディスクリプタまたはモデル固有レジスタで指定。<BR>
+#3 x86では、ページサイズ拡張または物理アドレス拡張を有効にすると2^36になるが、AMD64のlegacyモードではそれぞれ2^40、2^52になる。<BR>
+#4 <A HREF="ASM.HTM#UNREAL">リアルモードの特殊な状態</A>を使うと、2^32になる。
+
+<P>各モードの区別は次のビットで行う。
+<UL>
+<LI>legacyモードとlongモード: EFER(モデル固有レジスタC0000080h)のLMEビット
+<LI>compatibilityモードと64ビットモード: コードセグメントディスクリプタのLビット
+<LI>compatibilityモード中の16/32ビット: コードセグメントディスクリプタのDビット(legacyモードと同様)
+</UL>
+longモード中のサブモードの切り替えは、適切なセグメントディスクリプタを用意しておけば、JMP,CALL,RET命令の実行や割り込みハンドラの起動で行える。legacyモードとlongモードの切り替えは少々複雑である。例えば、legacyモード中のリアルモードからlongモード中のcompatibilityモードに切り替えるには、次のような手順を経る必要がある。
+<UL>
+<LI>割り込みを禁止する
+<LI>プロテクトモードに切り替える(GDTR設定、CR0のPEビットを1)。
+<LI>物理アドレス拡張を有効にする(CR4のPAEビットを1)
+<LI>longモードを許可する(EFERのLMEビットを1)
+<LI>ページングを有効にする(ページテーブル(物理アドレスとリニアアドレスが同じ)作成、CR3設定、CR0のPEビットを1)
+</UL>
+longモードを本格的に使うには、この後IDTRを設定する必要があるし、ディスクリプタテーブルなどを4GBを超える物理アドレスに置きたければ、64ビットモードで特権命令を使って設定する必要がある。
+
+<P>以下の各節では、主に64ビットモードで追加・拡張された機能について解説する。
+
+<H3>2.2 レジスタ</H3>
+
+64ビットモードでは、汎用レジスタは64ビットに拡張されただけでなく、数も2倍の16本になった。XMMレジスタも16本になったが、FPUデータレジスタおよびMMXレジスタは8本のままである。
+
+<P>64ビットの汎用レジスタはRAX,RCX,…で、下位半分が従来のEAX,ECX,…に相当する。追加された8本の汎用レジスタは、R8,R9,…,R15で、下位32ビットがR8D,R9D,…、下位16ビットがR8W,R9W,…、下位8ビットがR8B,R9B,…である。なお、SP,BP,SI,DIの下位8ビットは、SPL,BPL,SIL,DILとして使うことができる(後述のREXプリフィックスを使用したとき)。逆に、R8,R9,R10,R11のビット8-15を8ビットレジスタとして使うことはできない。
+
+<P>この文章で扱うレジスタをまとめると、次のようになる。
+<DL>
+<DT>8ビットレジスタ
+<DD>AL,CL,DL,BL,AH,CH,DH,BH,SPL,BPL,SIL,DIL,R8B,R9B,…,R15B
+<DT>16ビットレジスタ
+<DD>AX,CX,DX,BX,SP,BP,SI,DI,R8W,R9W,…,R15W
+<DT>32ビットレジスタ
+<DD>EAX,ECX,EDX,EBX,ESP,EBP,ESI,EDI,R8D,R9D,…,R15D
+<DT>64ビットレジスタ
+<DD>RAX,RCX,RDX,RBX,RSP,RBP,RSI,RDI,R8,R9,…,R15
+<DT>セグメントレジスタ
+<DD>ES,CS,SS,DS,FS,GS
+<DT>命令ポインタ(16,32,64ビット)
+<DD>IP,EIP,RIP
+<DT>フラグレジスタ(16,32,64ビット)
+<DD>FLAGS,EFLAGS,RFLAGS
+<DT>個々のフラグ
+<DD>CF,PF,AF,ZF,SF,TF,IF,DF,OF
+</DL>
+
+<P>オペランドサイズあるいはアドレスサイズによって、RAX,RCX,…またはEAX,ECX,…が使われる場合、rAX,rCX,…と表記する。R8,R9,…またはR8D,R9D…が使われる場合(さらにR8W,R9W,…とR8B,R9B,…を含むこともある)、r8,r9,…と表記する。
+
+<P>汎用レジスタの下位32ビットに書き込むと、上位32ビットは0になる。例えば、 MOV EAX,EAX は、RAXの上位32ビットをクリアする。16,8ビットの書き込みでは、残りの部分は変更されない。
+
+<H3>2.3 REXプリフィックス</H3>
+
+64ビットモードで追加されたレジスタを使用したり、64ビットオペランドサイズを使用したりするためには、REXプリフィックスを使う。REXプリフィックスは、40h-4Fhの16個あり、下位4ビットが以下の4つの機能に対応している。
+<UL>
+<LI>ビット0: REX.B: r/mフィールドまたはbaseフィールドを拡張、オペコード中のregフィールドを拡張
+<LI>ビット1: REX.X: indexフィールドを拡張
+<LI>ビット2: REX.R: ModR/Mバイトのregフィールドを拡張
+<LI>ビット3: REX.W: 64ビットオペランドサイズを使用
+ <UL>
+ <LI>デフォルトオペランドサイズが8ビットの命令には無効
+ <LI>オペランドサイズプリフィックスより優先される
+ </UL>
+</UL>
+REXプリフィックスは、x86のプリフィックスより後、オペコードの直前に置かなければならない。また、REXプリフィックスを使ったときは、AH,CH,DH,BHをオペランドとすることはできず、代わりにSPL,BPL,SIL,DILが使われる。
+
+<P>以上をまとめると次のようになる。
+<PRE>REX                -  40 41 42 43 44 45 46 47 48 49 4A 4B 4C 4D 4E 4F
+r/m,baseにr8-r15   × × ○ × ○ × ○ × ○ × ○ × ○ × ○ × ○
+r/mにSPL,BPLなど   × ○ -- ○ -- ○ -- ○ -- ○ -- ○ -- ○ -- ○ --
+indexにr8-r15      × × × ○ ○ × × ○ ○ × × ○ ○ × × ○ ○
+regにr8-r15        × × × × × ○ ○ ○ ○ × × × × ○ ○ ○ ○
+regにSPL,BPLなど   × ○ ○ ○ ○ -- -- -- -- ○ ○ ○ ○ -- -- -- --
+64ビットオペランド × × × × × × × × × ○ ○ ○ ○ ○ ○ ○ ○
+</PRE>
+
+<P>この章では今後、必要なビットだけが1になっているREXプリフィックスを代表として「REX=44」のように示す。複数の機能を組み合わせるときには、ORをとって一つのREXプリフィックスにする。
+
+<H3>2.4 アドレシングモード</H3>
+
+64ビットモードでは、レジスタが増えただけでなく、メモリオペランドにRIP相対アドレシングが使えるようになった。デフォルトではアドレスサイズは64ビットだが、アドレスサイズプリフィックスを用いると32ビットにすることができ、その場合(RIP相対であっても)すべてのアドレス計算の後で上位32ビットが0にされる(FS,GSは?)。
+
+<P>命令中の即値や変位は、いくつかの例外を除いて最大32ビットである。例外とは、A0h-A3hとB8h-BFhの各命令である。
+
+<P>ModR/Mバイトのregフィールドは、オペランドサイズに応じて、次のように解釈される。
+<PRE>size	reg	00	08	10	18	20	28	30	38
+ 8	-	AL	CL	DL	BL	AH	CH	DH	BH
+	REX=40	AL	CL	DL	BL	SPL	BPL	SIL	DIL
+	REX=44	R8B	R9B	R10B	R11B	R12B	R13B	R14B	R15B
+16	-	AX	CX	DX	BX	SP	BP	SI	DI
+	REX=44	R8W	R9W	R10W	R11W	R12W	R13W	R14W	R15W
+32	-	EAX	ECX	EDX	EBX	ESP	EBP	ESI	EDI
+	REX=44	R8D	R9D	R10D	R11D	R12D	R13D	R14D	R15D
+64	-	RAX	RCX	RDX	RBX	RSP	RBP	RSI	RDI
+	REX=44	R8	R9	R10	R11	R12	R13	R14	R15
+</PRE>
+表には示さないが、XMM8、CR8、DR8なども同様である。
+
+<P>ModR/Mバイトのmodフィールドとr/mフィールドは、オペランドサイズに応じて、次のように解釈される。SIBについては後述する。
+<PRE>r/m  -  REX=41    r/m     -        REX=41     r/m     -         REX=41      r/m      -       REX=41
+00 [rAX] [r8]     40 [rAX+disp8] [r8+disp8]   80 [rAX+disp32] [r8+disp32]   C0 AL/AX/EAX/RAX   r8
+01 [rCX] [r9]     41 [rCX+disp8] [r9+disp8]   81 [rCX+disp32] [r9+disp32]   C1 CL/CX/ECX/RCX   r9
+02 [rDX] [r10]    42 [rDX+disp8] [r10+disp8]  82 [rDX+disp32] [r10+disp32]  C2 DL/DX/EDX/RDX   r10
+03 [rBX] [r11]    43 [rBX+disp8] [r11+disp8]  83 [rBX+disp32] [r11+disp32]  C3 BL/BX/EBX/RBX   r11
+04 [SIB] [SIB]    44 [SIB+disp8] [SIB+disp8]  84 [SIB+disp32] [SIB+disp32]  C4 AH#b/SP/ESP/RSP r12
+05 [RIP+disp32]#a 45 [rBP+disp8] [r13+disp8]  85 [rBP+disp32] [r13+disp32]  C5 CH#b/BP/EBP/RBP r13
+06 [rSI] [r14]    46 [rSI+disp8] [r14+disp8]  86 [rSI+disp32] [r14+disp32]  C6 DH#b/SI/ESI/RSI r14
+07 [rDI] [r15]    47 [rDI+disp8] [r15+disp8]  87 [rDI+disp32] {r15+disp32]  C7 BH#b/DI/EDI/RDI r15
+#a REX.Bに関係なくRIP相対
+#b REX.Bが0のREXプリフィックスを使用すると、順にSPL,BPL,SIL,DIL
+</PRE>
+
+ModR/Mバイトのr/mフィールドが、SIBを使用することを示してしているとき、SIBバイトのbase,index,scaleの各フィールドはそれぞれ次のように解釈される。
+<PRE>     [SIB]    [SIB+disp8] [SIB+disp32]
+base - REX=41   - REX=41    - REX=41
+00  rAX  r8    rAX  r8     rAX  r8
+01  rCX  r9    rCX  r9     rCX  r9
+02  rDX  r10   rDX  r10    rDX  r10
+03  rBX  r11   rBX  r11    rBX  r11
+04  rSP  r12   rSP  r12    rSP  r12
+05  disp32#c   rBP  r13    rBP  r13
+06  rSI  r14   rSI  r14    rSI  r14
+07  rDI  r15   rDI  r15    rDI  r15
+#c REX.Bに関係なく直接アドレス
+
+index	00	08	10	18	20	28	30	38
+-	rAX	rCX	rDX	rBX	-#d	rBP	rSI	rDI
+REX=42	r8	r9	r10	r11	r12	r13	r14	r15
+#d [rSP]、[r12]、および[disp32]のために使う
+
+scale	00	40	80	C0
+	*1	*2	*3	*4
+</PRE>
+
+<P>結局、メモリオペランドについては次のようなアドレシングモードがあることになる。
+<PRE>[base]			baseはrBP,r13以外
+[RIP+disp32]
+[disp32]
+[base+disp]
+[base+index*scale]	baseはrBP,r13以外
+[index*scale+disp32]
+[base+index*scale+disp]
+baseはベースレジスタ(全汎用レジスタ)
+indexはインデックスレジスタ(rSP以外)
+scaleはスケール(1,2,4,8)
+disp32は32ビットの変位(符号つき定数)
+dispは8または32ビットの変位(符号つき定数)
+</PRE>
+注意するべき点は次の通りである。
+<UL>
+<LI>インデックスレジスタを使うと、使わないときと比べて命令が1バイト長くなる。
+<LI>インデックスレジスタを使わなくても、rSP,r12をベースレジスタにした場合には、他のレジスタと比べて命令が1バイト長くなる。
+<LI>rSPをインデックスレジスタにすることはできない。
+<LI>変位は8または32ビットなので、変位が-128～+127の範囲を出ると命令が3バイト長くなる。
+<LI>[index*scale]という形式はないので、これを使おうとすると、[index*scale+disp32]の形式がdisp32が0として使われ、[base+index*scale]の形式より4バイト長くなる。
+<LI>rBP,r13をベースレジスタとして使う、変位なしの形式はない。
+<LI>RIP相対アドレシングでは、変位は32ビットに限られ、インデックスレジスタを使うことはできない。
+<LI>[disp32]の形式は、[base+disp32]や[RIP+disp32]と比べて命令が1バイト長くなる。
+<LI>ベースレジスタとインデックスレジスタのどちらも使わない場合は、[disp32]の形式しかないので、アクセスできるオフセットアドレスは±2GBに限定される。
+</UL>
+
+<H3>2.5 セグメント</H3>
+
+64ビットモードでは、セグメントレジスタの役割は非常に小さい。セグメント属性による保護は行われず、セグメントリミットのチェックもない。CS,DS,ES,SSのセグメントベースアドレスは常に0として扱われ、セグメントオーバーライドプリフィックスは無視される。ただし、FS,GSのベースアドレスは64ビット指定可能で、オーバーライドも有効である。結局次のようになる。
+<DL>
+<DT>CS
+<DD>レジスタの値に対応したセグメントディスクリプタが使われるが、DPL以外は無視される。(64ビットモードの有効なコードセグメントディスクリプタなので、S,P,Lビットは1、Dビットは0でなければならない)Cは?。
+<DT>DS,ES,SS
+<DD>値をロードするときには、legacyモードと同様にDPLのチェックが行われる。しかし、メモリアクセスの際はすべて無視される。CPL=3のSS以外は、NULLセレクタを入れておいてもよい。
+<DT>FS,GS
+<DD>値をロードすると、legacyモードと同様のDPLチェックの他、ベース(32ビット)が使われる(上位32ビットは0)。モデル固有レジスタを使って64ビットのベースアドレスを設定することもできる。
+</DL>
+
+<H3><A NAME="OPERAND">2.6 32/64ビットオペランド</A></H3>
+
+64ビットモードでは、デフォルトオペランドサイズは32ビットであり、たいていの命令では、REXプリフィックスを使わなければ64ビットオペランドにアクセスできない。汎用レジスタに32ビットの値を書き込むと、上位32ビットはクリアされる。
+
+<P>64ビットオペランドであっても、即値のエンコーディングは32ビットであり、符号拡張されて使用される。
+
+<P>64ビットオペランドに対するシフトカウントは、下位6ビットが有効になる。
+
+<P>BSWAP命令
+
+<P>JMP,CALL,Jcc
+<UL>
+<LI>near相対: 8または32ビットの変位がRIPに反映される
+<LI>nearレジスタまたはメモリ: 64ビットのオフセットアドレス
+<LI>far絶対: なし
+<LI>farメモリ: 飛び先は16ビットのセレクタと32ビットのオフセットアドレス(オペランドサイズによらない)。CALLの場合、スタックに積まれるアドレスは次のようになり、対応するオペランドサイズのRET far命令で戻ることができる。
+ <UL>
+ <LI>32ビットオペランドサイズ: 32ビットのオフセットアドレスと32ビットに拡張されたセレクタ
+ <LI>64ビットオペランドサイズ: 64ビットのオフセットアドレスと64ビットに拡張されたセレクタ
+ </UL>
+ 32ビットオペランドサイズを使用するときは、戻り番地の上位32ビットは0でなければならない。また、飛び先がcompatibilityモードの場合、SS:ESPまたはSS:SPが有効なスタックを指していなければならない。
+</UL>
+
+<P>CMOVで32ビットオペランドサイズのとき、条件が偽であっても転送先レジスタの上位32ビットはクリアされる。
+
+<P>CMPXCHG8B命令は<A HREF="#NEWINST">追加された命令</A>のCMPXCHG16B命令を参照。
+
+<P>CPUID命令のオペランドサイズは32ビット固定で、64ビットを指定しても無視される。
+
+<P>ENTER,LEAVE命令のオペランドサイズは64ビット固定である(32ビットはエンコードできない)。
+
+<P>INのオペランドは8,16,32ビットまで? OUTも?
+INS,INSW,INSD,OUTS,OUTSW,OUTSD
+
+<P>LFS,LGS,LSS命令のオペランドサイズは32ビット固定?
+
+<P>MMX命令のMOVD命令は、64ビットとしても使える。
+
+<P>PUSH,POPはデフォルト64ビットだが、16ビットにもできる(RSPも2ずつ増減)。
+
+<P>RET nearは64ビット固定
+
+<P>RET farはデフォルト32ビットだが、64ビットにもできる
+
+<P>VERR,VERW命令は16ビット固定
+
+<P>NOP(90h)は、 XCHG EAX,EAX とは異なる動作になる。後者は上位32ビットをクリアする。
+
+<H3><A NAME="NEWINST">2.7 追加された命令</A></H3>
+
+(準備中)
+
+<P>MOVSXD
+CDQE
+CMPSQ
+IRETD,IRETQ
+JRCXZ
+LODSQ
+MOVSQ
+POPFQ
+PUSHFQ
+SCASQ
+STOSQ
+SWAPGS
+SYSCALL
+SYSRET
+
+<P>CMPXCHG16B命令は、CMPXCHG8B命令にREXプリフィックスをつけて64ビットにしたものである。CPUID命令のCMPXCHG16Bビットが1の場合に利用でき、そうでない場合は無効命令例外が発生する。
+
+<H3><A NAME="INVALID">2.8 使用できない命令</A></H3>
+
+(準備中)
+
+<P>AAA,AAS,AAM,AAD命令
+<P>BOUND命令
+<P>CALL,JMP命令のうちfar絶対
+<P>DAA,DAS命令
+<P>INTO命令
+<P>LAHF,SAHF命令(CPUID命令のLahfSahfビットが1の場合は使用できる。Errata 110の影響で、使用できるのにこのビットが0の場合があるが、通常はファームフェアで修正されている)
+<P>LDS,LES命令
+<P>PUSH ES/CS/SS/DS、POP ES/SS/DS
+<P>PUSHA,PUSHAD,POPA,POPAD命令
+<P>オペコード82h(80hの別名)
+<P>SALC(ドキュメント化されていない命令)
+<P>ARPL命令(MOVSXD命令になる)
+<P>命令長1バイトのINC,DEC命令(REXプリフィックスになる)
+<P>SYSENTER,SYSEXIT命令はlongモードで使用できない
+
+<H3>2.9 longモードでのシステムプログラミング</H3>
+
+<UL>
+<LI>アドレスは正規形(canonical form)でなければならない
+<LI>割り込みハンドラは64ビットモード
+<LI>コール・ゲートは64ビットのみ(呼び先も64ビット)
+<LI>TSSはタスク切り替えではなく割り込み処理方法などの情報のために使う
+<LI>LGTR,LITR,LLTR,LTR,LMSW,...
+<LI>64ビットモードに切り替わったとたんに、セグメントベースアドレスは無効になるので、特にスタックセグメントには注意が必要である。
+</UL>
+
+(準備中)
+
+<HR>
+
+<H2><A NAME="PROCESSOR">3. 搭載プロセッサ</A></H2>
+
+ここではAMDのプロセッサについて述べる。コアのアーキテクチャで大きく分けると、Family 0Fh、10h、11h、12h、14h、15hとなる。Familyは16進で表され、CPUIDのBaseFamily(AMD64搭載プロセッサでは0Fh)とExtendedFamilyを加算したものである。
+
+<P>同じFamilyの中でも製品によって、コア数、キャッシュサイズなどが異なる。特にFamily 0Fhでは、Revisionによって拡張命令などのサポート状況が異なる。
+
+<P>以下はAMD64を搭載する主なプロセッサの仕様である。
+(準備中)
+
+<PRE>					コア数
+					  L2キャッシュ	メモリの種類
+製品名			コードネーム	    L3キャッシュ   チャンネル数	Family/Revision
+
+Opteron			SledgeHammer	1 1MB		DDR 2		0Fh/C
+Opteron 8xx		Athenes
+Opteron 2xx		Troy
+Opteron 1xx		Venus
+
+Athlon 64 FX		SledgeHammer	1 1MB		DDR 2		0Fh/C
+Athlon 64		ClawHammer	1 1MB/512KB	DDR 1		0Fh/C
+Athlon 64		Newcastle	1 512KB		DDR 2		0Fh/C
+Athlon 64		Winchester	1 512KB		DDR 2		0Fh/D
+Athlon 64 FX		San Diego	1 1MB		DDR 2		0Fh/E
+Athlon 64		Venice		1 1MB/512KB	DDR 2		0Fh/E
+Athlon 64 FX/X2		Toledo		2 1MBx2		DDR 2		0Fh/E
+Athlon 64 X2		Manchester	2 512KBx2	DDR 2		0Fh/E
+Athlon 64 FX/X2		Windsor		2 1MBx2/512KBx2	DDR2 2		0Fh/F
+Athlon 64		Orleans		1 1MB/512KB	DDR2 2		0Fh/F
+Athlon (64) X2		Brisbane	2 512KBx2	DDR2 2		0Fh/G
+Athlon (64)		Lima		1 512KB		DDR2 2		0Fh/G
+Phenom X4		Agena		4 512KBx4 2MB	DDR2 2		10h
+Phenom X3		Toliman		3 512KBx3 2MB	DDR2 2		10h
+Athlon X2		Kuma		2 512KBx2 2MB	DDR2 2		10h
+Phenom II X4		Deneb		4 512KBx4 6MB	DDR2/3 2	10h
+Phenom II X3		Heka		3 512KBx3 6MB	DDR3 2		10h
+Phenom II X2		Callisto	2 512KBx2 6MB	DDR3 2		10h
+Athlon II X4		Propus		4 512KBx4	DDR3 2		10h
+Athlon II X3		Rena		3 512KBx3	DDR3 2		10h
+Athlon II X2		Regor		2 1MBx2		DDR3 2		10h
+Phenom II X6		Thuban		6 512KBx6 6MB	DDR3 2		10h
+AMD A-Series		Llano		4 1MBx4		DDR3 2		12h
+AMD C-Series		Ontario		2 512KBx2	DDR3 1		14h
+AMD E-Series		Zacate		1/2 512KBx1/2	DDR3 1		14h
+AMD FX-Series		Zambezi		8 2MBx4		DDR3 2		15h
+
+低電圧版モバイルAthlon 64  Oakville
+Turion 64		Lancaster	1 1MB/512KB	DDR 1		0Fh/E
+Turion 64 X2		Taylor		2				0Fh/F
+Turion 64 X2				2				0Fh/G
+Turion X2 Ultra		Griffin		2				11h
+Turion II				2				10h
+</PRE>
+
+<UL>
+<LI>64ビットモードでのLAHF,SAHF命令: Rev.Dから(CPUIDのLahfSahfビットはRev.Fから)
+<LI>SSE3(MONITOR,MWAIT命令を除く): Rev.Eから
+<LI>AMD-V: Rev.Fから
+<LI>CMPXCHG16B,RDTSCP命令: Rev.Fから
+<LI>Nested Paging: 10hから
+<LI>1GB paging: 10hから
+<LI>SSE4A、SSE3のうちMONITOR,MWAIT命令: 10hから
+<LI>ABM(POPCNT,LZCNT命令): 10hから
+<LI>SSE5: キャンセル
+<LI>AVX: 15hから
+<LI>XOP: 15hから
+</UL>
+
+<HR>
+
+<H2><A NAME="CLOCK">4. 主な命令一覧</A></H2>
+
+(準備中)<BR>
+
+REXプリフィックスを使用して64ビットレジスタを使ったり、拡張されたレジスタを使ったりすることによる、実行時間のペナルティーはない。
+
+<HR>
+
+<H2><A NAME="BIB">参考文献</A></H2>
+
+[a1]-[a12]は<A HREF="http://developer.amd.com/documentation/guides/Pages/default.aspx
+">Developer Guides and Manuals | AMD Developer Central</A>より、[i1][i2][i3]の英語最新版は<A HREF="http://www.intel.com/products/processor/manuals/index.htm">Intel&reg; 64 and IA-32 Architectures Software Developer's Manuals</A>より、日本語版(英語版より古い)は<A HREF="http://www.intel.com/jp/download/index.htm">日本語技術資料のダウンロード</A>よりダウンロード可能である。
+
+<DL COMPACT>
+<DT>[a1]<DD>AMD64 Architecture Programmer's Manual Volume 1: Application Programming
+<DT>[a2]<DD>AMD64 Architecture Programmer's Manual Volume 2: System Programming
+<DT>[a3]<DD>AMD64 Architecture Programmer's Manual Volume 3: General-Purpose and System Instructions
+<DT>[a4]<DD>AMD64 Architecture Programmer's Manual Volume 4: 128-bit and 256 bit media instructions
+<DT>[a5]<DD>AMD64 Architecture Programmer's Manual Volume 5: 64-Bit Media and x87 Floating-Point Instructions
+<DT>[a6]<DD>CPUID Specification
+<DT>[a7]<DD>Revision Guide for AMD Athlon 64 and AMD Opteron Processors
+<DT>[a8]<DD>Revision Guide for AMD NPT Family 0Fh Processors
+<DT>[a9]<DD>Revision Guide for AMD Family 10h Processors
+<DT>[a10]<DD>Revision Guide for AMD Family 11h Processors
+<DT>[a11]<DD>Revision Guide for AMD Family 12h Processors
+<DT>[a12]<DD>Revision Guide for AMD Family 14h Models 00h-0Fh Processors
+<DT>[i1]<DD>IA-32 インテル アーキテクチャ・ソフトウェア・デベロッパーズ・マニュアル 上巻：基本アーキテクチャ
+<DT>[i2]<DD>IA-32 インテル アーキテクチャ・ソフトウェア・デベロッパーズ・マニュアル 中巻：命令セット・リファレンス
+<DT>[i3]<DD>IA-32 インテル アーキテクチャ・ソフトウェア・デベロッパーズ・マニュアル 下巻：システム・プログラミング・ガイド
+</DL>
+
+<P>この文章の各章に対する参照箇所は次のとおりである。
+
+<UL>
+<LI>2.1 モード
+ <UL>
+ <LI>[a2] 1.3 Operating Modes
+ <LI>[a2] 14. Processor Initialization and Long-Mode Activation
+ <LI>[i3] 3.6. ページング(仮想メモリ)の概要
+ <LI>[a2] 5.1 Page Translation Overview
+ <LI>[a2] 4.5.3 Segment Registers in 64-bit Mode
+ </UL>
+<LI>2.2 レジスタ
+ <UL>
+ <LI>[a3] 2.3 Summary of Registers and Data Types
+ </UL>
+<LI>2.3 REXプリフィックス
+ <UL>
+ <LI>[a3] 1.2.7 REX Prefixes
+ </UL>
+<LI>2.4 アドレシングモード
+ <UL>
+ <LI>[a1] 3.2.2 Operand Sizes and Overrides
+ <LI>[a3] 1.2.7 REX Prefixes
+ <LI>[a3] A.3 Operand Encodings
+ </UL>
+<LI>2.5 セグメント
+ <UL>
+ <LI>[a2] 4.5.3 Segment Registers in 64-bit Mode
+ <LI>[a2] 4.8 Long-Mode Segment Descriptors
+ <LI>[a3] B.7 Segment Override Prefixes in 64-Bit Mode
+ </UL>
+<LI>2.6 32/64ビットオペランド
+ <UL>
+ <LI>[a3] B.1 General Rules for 64-Bit Mode
+ <LI>[a3] B.2 Operation and Operand Size in 64-Bit Mode
+ </UL>
+<LI>2.8 使用できない命令
+ <UL>
+ <LI>[a2] 2.5.10 Invalid Instructions
+ <LI>[a3] B.3 Invalid and Reassigned Instructions in 64-Bit Mode
+ </UL>
+</UL>
+
+</BODY>
+</HTML>

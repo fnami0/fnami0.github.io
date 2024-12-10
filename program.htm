@@ -1,0 +1,211 @@
+<HTML>
+<HEAD>
+<TITLE>fnami: Programming</TITLE>
+</HEAD>
+<BODY>
+
+<H1>趣味のプログラミング</H1>
+
+<HR>
+
+<H2>80x86アセンブラ</H2>
+
+<H3>基本</H3>
+
+2オペランド命令で両方に同じレジスタを指定するとどうなるか考えるのが基本である。
+
+<DL>
+<DT>MOV AX,AX
+<DD>何もしない。
+<DT>ADD AX,AX
+<DD>SHL AX,1と同じ。486ではADDが高速。
+<DT>ADC AX,AX
+<DD>RCL AX,1と同じ。486ではADCが高速。
+<DT>SUB AX,AX / XOR AX,AX
+<DD>0にする。
+<DT>SBB AX,AX
+<DD>Carryフラグが立っていたら0、降りていたら0FFFFh、Carryフラグは変化しない。
+<DT>AND AX,AX / OR AX,AX / TEST AX,AX
+<DD>0との比較。
+<DT>CMP AX,AX
+<DD>Zeroフラグを立てる。
+</DL>
+
+<H3>ビットを入れ替えるには</H3>
+
+例えば、ALのビット2と4を入れ替えるには、次のようにするとよい。
+<PRE>
+	TEST AL,14H
+	JPE SKIP
+	XOR AL,14H
+SKIP:
+</PRE>
+Parityフラグは下位8ビットについての結果を反映するため、この方法は8ビットレジスタにしか使えない。
+
+<H3>32ビットレジスタへの定数ロード</H3>
+
+16ビットコードセグメントで実行しているときは、32ビットレジスタへの定数ロードは6バイト命令となってしまう。しかし、ロードしたい値が符号なし16ビットに収まっていれば、LEA命令を使うと5バイトですむ。
+
+<H3>JIS漢字コードとMS漢字コードの変換</H3>
+
+漢字コードの1バイト目をAHに、2バイト目をALに入れる場合のテクニックをよく見かけるが、80x86系では1バイト目がAL、2バイト目がAHというのが自然だろう。この場合の相互の変換方法を紹介する。
+<UL>
+<LI>JIS漢字コードからMS漢字コードへ
+<PRE>
+	ADD AX,(9Fh-21h)*256+(42h-21h)
+	SHR AL,1
+	JC SKIP
+	CMP AH,60h+(9Fh-21h)
+	SBB AH,9Fh-40h-1
+SKIP:	XOR AL,0A0h
+</PRE>
+<LI>MS漢字コードからJIS漢字コードへ
+<PRE>
+	AND AL,3Fh
+	SHL AL,1
+	SUB AH,9FH
+	JAE SKIP
+	DEC AX
+	CMP AH,80h-9Fh
+	ADC AH,9Fh-40h-1
+SKIP:	ADD AX,2120h
+</PRE>
+</UL>
+これより短い方法があったら教えてください。
+
+<HR>
+
+<H2>MS-DOSの注意事項</H2>
+
+<H3>アブソリュートディスクリード/ライトの形式</H3>
+
+準備中
+
+<H3>ファイルやディレクトリの先頭クラスタやセクタを知る</H3>
+
+<P>ルートディレクトリの先頭セクタは、ファンクション32hの結果を見ればわかる。ファンクション32hは、DOS 5で公開されたファンクションだが、DOS 2以降で使用可能である。ただし、DOS 4以降は仕様が変更されている。仕様は次の通りである(Ralf BrownのInterrupt Listより抜粋)。
+<PRE>
+--------D-2132-------------------------------
+INT 21 - DOS 2+ - GET DOS DRIVE PARAMETER BLOCK FOR SPECIFIC DRIVE
+	AH = 32h
+	DL = drive number (00h = default, 01h = A:, etc)
+Return: AL = status
+	    00h successful
+		DS:BX -> Drive Parameter Block (DPB) for specified drive
+	    FFh invalid or network drive
+注意書きなど省略
+Format of DOS Drive Parameter Block:
+Offset	Size	Description
+ 00h	BYTE	drive number (00h = A:, 01h = B:, etc)
+ 01h	BYTE	unit number within device driver
+ 02h	WORD	bytes per sector
+ 04h	BYTE	highest sector number within a cluster
+ 05h	BYTE	shift count to convert clusters into sectors
+ 06h	WORD	number of reserved sectors at beginning of drive
+ 08h	BYTE	number of FATs
+ 09h	WORD	number of root directory entries
+ 0Bh	WORD	number of first sector containing user data
+ 0Dh	WORD	highest cluster number (number of data clusters + 1)
+		16-bit FAT if greater than 0FF6h, else 12-bit FAT
+ 0Fh	BYTE	number of sectors per FAT
+ 10h	WORD	sector number of first directory sector
+以下略
+---DOS 4.0-6.0---
+ 0Fh	WORD	number of sectors per FAT
+ 11h	WORD	sector number of first directory sector
+以下略
+</PRE>
+ルートディレクトリの先頭セクタ番号は、DS:[BX+10h]またはDS:[BX+11h]にあることがわかる。なお、セクタ数はbytes per sectorとnumber of root directory entriesから計算してもよいが、number of first sector containing user dataの直前までがルートディレクトリなので、これを使うほうが簡単である。
+
+<P>ファイルやサブディレクトリの先頭クラスタを知るには、FCBを使ってファイルを検索するファンクション11hと12hを使う。見つかったファイルのディレクトリエントリがDTAのオフセット1から、または8から(拡張FCBを使ったとき)入っているので、その中の先頭クラスタを使う。ディレクトリエントリの形式は次の通りである(Ralf BrownのInterrupt Listより)。
+<PRE>
+Format of directory entry:
+Offset	Size	Description
+ 00h  8 BYTEs	blank-padded filename
+ 08h  3 BYTEs	blank-padded file extension
+ 0Bh	BYTE	attributes
+ 0Ch 10 BYTEs	reserved
+		used by DR-DOS to store file password
+ 16h	WORD	time of creation or last update (see AX=5700h)
+ 18h	WORD	date of creation or last update (see AX=5700h)
+ 1Ah	WORD	starting cluster number
+ 1Ch	DWORD	file size
+</PRE>
+クラスタ番号ではなくセクタ番号が必要なときには、次の式を使う。変換に必要なパラメタは、上で説明したファンクション32hで得られる。
+<PRE>
+SHIFT_COUNT: shift count to convert clusters into sectors
+DATA_START_SECTOR: number of first sector containing user data
+セクタ番号 = (クラスタ番号-2)*2^SHIFT_COUNT + DATA_START_SECTOR
+</PRE>
+先頭以外のクラスタ番号またはセクタ番号を知りたいときには、FATのチェーンをたどっていけばよい。
+
+<H3>ファンクション4EHの特殊動作(1)</H3>
+
+ワイルドカードなしでデバイス名を指定したときは、バージョンにより異なる動作をする。
+
+<DL>
+<DT>DOS 2
+<DD>マッチする。
+<DT>DOS 3
+<DD>属性がボリュームラベルを含むときは、繰り返し実行するとマッチしなくなる。
+<DT>DOS 5
+<DD>属性がボリュームラベルを含むときはマッチしない。
+<DT>Windows 95
+<DD>???
+</DL>
+
+<H3>ファンクション4EHの特殊動作(2)</H3>
+
+「.」および「..」を指定したときの動作も奇妙である。「.」は現在のディレクトリを返す。「..」はバージョンによって異なる。
+<DL>
+<DT>DOS 3
+<DD>..は上のディレクトリを返す。
+<DT>DOS 5
+<DD>..は上のディレクトリを返す。
+<DT>DOS 6
+<DD>..はマッチしない。
+<DT>Windows 95
+<DD>???
+</DL>
+
+<HR>
+
+<H2><A HREF="http://www.pc98.nec.co.jp/">PC-9800シリーズ</A>での注意事項</H2>
+
+<H3>98ノートのレジューム</H3>
+
+古い98ノートのレジュームには、有名なA20ラインの問題の他に、次のようなバグがある。
+<DL COMPACT>
+<DT>機種:
+<DD>PC-9801NS/E,PC-9801NC,PC-9801NS/L(未確認),PC-9801NA
+<DT>現象:
+<DD>EAXとEBXの上位16ビットが破壊される。
+</DL>
+
+<H3>EMM386.EXEのバグ</H3>
+
+上記の機種でMS-DOS5.0Aの古いバージョン(同じ5.0Aでもいくつかのバージョンがある)のEMM386.EXEを使うと、レジュームに失敗することがある。これは、EMM386のレジューム機能に関する部分が、セグメントレジスタFSとGSの値によっては誤動作するためである。MS-DOS5.0Aの最新版では修正されている。
+
+<H3>テキスト画面の表示領域設定</H3>
+
+拡張グラフアーキテクチャを持つ機種では、INT 18h AH=0Ehで設定した、テキスト画面の複数の表示領域を、INT 18h AH=0Fhで一つの表示領域に戻そうとすると、表示範囲がおかしくなる。
+
+<HR>
+
+<H2>フリーソフト</H2>
+
+<UL>
+<LI>
+<A HREF="http://www.vector.co.jp/common/dos/cpuut/cpuhi110.lzh">CPUHIGH</A>: PC-9800シリーズの動作CPUを高速側に切り換えるデバイスドライバ
+<LI>
+<A HREF="http://www.vector.co.jp/common/dos/cpuut/cpuhalt.lzh">CPUHALT</A>: PC98用パワーセーバ
+<LI>
+<A HREF="http://www.vector.co.jp/common/dos/machine/note/resume32.lzh">RESUME32</A>: 98ノートのレジューム安定化ドライバ
+<LI>CLOCKデバイスの名前を変更する。
+<LI>フルスクリーンライフゲーム
+<LI>
+<!--A HREF="holiday.htm"-->HOLIDAY</A>: 休日一覧（準備中）
+</UL>
+
+</BODY>
+</HTML>
